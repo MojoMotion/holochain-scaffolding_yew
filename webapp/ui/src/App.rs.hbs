@@ -1,0 +1,30 @@
+struct App {
+}
+
+impl Component for App {
+    type Message = ();
+    type Properties = ();
+
+    fn create(_ctx: &Context<Self>) -> Self {
+        Self {
+        }
+    }
+
+    fn update(&mut self, _ctx: &Context<Self>, _msg: Self::Message)-> bool {
+        true
+    }
+
+    fn view(&self, _ctx: &Context<Self>) -> Html {
+        //let link = ctx.link();
+        html!(
+            <body>
+                <header::Header/>
+                <listing_control::ListingControl/>
+                <categories_listing::CategoriesListing/>
+                <categories_slider::CategoriesSlider/>
+                <last_articles::LastArticles/>
+                <footer::Footer/>
+             </body>
+        )
+    }
+}
