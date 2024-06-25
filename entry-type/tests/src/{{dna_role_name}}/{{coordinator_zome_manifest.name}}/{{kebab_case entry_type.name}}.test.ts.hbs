@@ -1,72 +1,25 @@
-import test from 'node:test';
-import assert from 'node:assert';
+import { assert, test } from "vitest";
 
-import { runScenario, pause, CallableCell } from '@holochain/tryorama';
-import { NewEntryAction, ActionHash, Record, AppBundleSource } from '@holochain/client';
+import { runScenario, dhtSync, CallableCell } from '@holochain/tryorama';
+import {
+  NewEntryAction,
+  ActionHash,
+  Record,
+  Link,
+  CreateLink,
+  DeleteLink,
+  SignedActionHashed,
+  AppBundleSource,
+  fakeDnaHash,
+  fakeActionHash,
+  fakeAgentPubKey,
+  fakeEntryHash
+} from '@holochain/client';
 import { decode } from '@msgpack/msgpack';
 
-{{#each entry_type.fields}}
-  {{#if linked_from}}
-    {{#if (ne linked_from.hash_type "AgentPubKey")}}
-      {{#if (ne (pascal_case linked_from.name) (pascal_case ../entry_type.name))}}
-import { create{{pascal_case linked_from.name}} } from './{{kebab_case linked_from.name}}.test.js';
-      {{/if}}
-    {{/if}}
-  {{/if}}
-{{/each}}
+import { create{{pascal_case entry_type.name}}, sample{{pascal_case entry_type.name}} } from './common.js';
 
-async function sample{{pascal_case entry_type.name}}(cell: CallableCell, partial{{pascal_case entry_type.name}} = {}) {
-    return {
-        ...{
-{{#each entry_type.fields}}
-  {{#if linked_from}}
-    {{#if (ne linked_from.hash_type "AgentPubKey")}}
-      {{#if (eq cardinality "vector")}}
-        {{#if (eq (pascal_case linked_from.name) (pascal_case ../entry_type.name))}}
-          {{field_name}}: [],
-        {{else}}
-          {{#if (eq linked_from.hash_type "ActionHash")}}
-          {{field_name}}: [(await create{{pascal_case linked_from.name}}(cell)).signed_action.hashed.hash],
-          {{else}}
-          {{field_name}}: [((await create{{pascal_case linked_from.name}}(cell)).signed_action.hashed.content as NewEntryAction).entry_hash],
-          {{/if}}
-        {{/if}}
-      {{else}}
-        {{#if (eq (pascal_case linked_from.name) (pascal_case ../entry_type.name))}}
-          {{field_name}}: undefined,
-        {{else}}
-	  {{#if (eq linked_from.hash_type "ActionHash")}}
-          {{field_name}}: (await create{{pascal_case linked_from.name}}(cell)).signed_action.hashed.hash,
-          {{else}}
-          {{field_name}}: ((await create{{pascal_case linked_from.name}}(cell)).signed_action.hashed.content as NewEntryAction).entry_hash,
-          {{/if}}
-        {{/if}}
-      {{/if}}
-    {{else}}
-          {{field_name}}: cell.cell_id[1],
-    {{/if}}
-  {{else}}
-      {{#if (eq cardinality "vector")}}
-	  {{field_name}}: [{{> (concat field_type "/sample")}}],
-      {{else}}
-	  {{field_name}}: {{> (concat field_type "/sample")}},
-      {{/if}}
-  {{/if}}
-{{/each}}
-        },
-        ...partial{{pascal_case entry_type.name}}
-    };
-}
-
-export async function create{{pascal_case entry_type.name}}(cell: CallableCell, {{camel_case entry_type.name}} = undefined): Promise<Record> {
-    return cell.callZome({
-      zome_name: "{{coordinator_zome_manifest.name}}",
-      fn_name: "create_{{snake_case entry_type.name}}",
-      payload: {{camel_case entry_type.name}} || await sample{{pascal_case entry_type.name}}(cell),
-    });
-}
-
-test('create {{pascal_case entry_type.name}}', { concurrency: 1 }, async t => {
+test('create {{pascal_case entry_type.name}}', async () => {
   await runScenario(async scenario => {
     // Construct proper paths for your app.
     // This assumes app bundle created by the `hc app pack` command.
@@ -89,7 +42,7 @@ test('create {{pascal_case entry_type.name}}', { concurrency: 1 }, async t => {
   });
 });
 
-test('create and read {{pascal_case entry_type.name}}', { concurrency: 1 }, async t => {
+test('create and read {{pascal_case entry_type.name}}', async () => {
   await runScenario(async scenario => {
     // Construct proper paths for your app.
     // This assumes app bundle created by the `hc app pack` command.
@@ -113,20 +66,35 @@ test('create and read {{pascal_case entry_type.name}}', { concurrency: 1 }, asyn
     assert.ok(record);
 
     // Wait for the created entry to be propagated to the other node.
-    await pause(1200);
+    await dhtSync([alice, bob], alice.cells[0].cell_id[0]);
 
     // Bob gets the created {{pascal_case entry_type.name}}
     const createReadOutput: Record = await bob.cells[0].callZome({
       zome_name: "{{coordinator_zome_manifest.name}}",
-      fn_name: "get_{{snake_case entry_type.name}}",
+      fn_name: "{{#if crud.update}}get_original_{{snake_case entry_type.name}}{{else}}get_{{snake_case entry_type.name}}{{/if}}",
       payload: {{#if entry_type.reference_entry_hash}}(record.signed_action.hashed.content as NewEntryAction).entry_hash{{else}}record.signed_action.hashed.hash{{/if}},
     });
     assert.deepEqual(sample, decode((createReadOutput.entry as any).Present.entry) as any);
+
+  {{#each entry_type.fields}}
+    {{#if linked_from}}
+      {{#if (ne (pascal_case linked_from.name) (pascal_case ../entry_type.name))}}
+    // Bob gets the {{pascal_case (plural linked_from.name)}} for the new {{pascal_case ../entry_type.name}}
+    let linksTo{{pascal_case (plural linked_from.name)}}: Link[] = await bob.cells[0].callZome({
+      zome_name: "{{../coordinator_zome_manifest.name}}",
+      fn_name: "get_{{snake_case (plural ../entry_type.name)}}_for_{{snake_case linked_from.name}}",
+      payload: {{#if (eq cardinality "vector")}}sample.{{field_name}}[0]{{else}}sample.{{field_name}}{{/if}}
+    });
+    assert.equal(linksTo{{pascal_case (plural linked_from.name)}}.length, 1);
+    assert.deepEqual(linksTo{{pascal_case (plural linked_from.name)}}[0].target, {{#if ../entry_type.reference_entry_hash}}(record.signed_action.hashed.content as NewEntryAction).entry_hash{{else}}record.signed_action.hashed.hash{{/if}});
+      {{/if}}
+    {{/if}}
+  {{/each}}
   });
 });
 
 {{#if crud.update}}
-test('create and update {{pascal_case entry_type.name}}', { concurrency: 1 }, async t => {
+test('create and update {{pascal_case entry_type.name}}', async () => {
   await runScenario(async scenario => {
     // Construct proper paths for your app.
     // This assumes app bundle created by the `hc app pack` command.
@@ -167,12 +135,12 @@ test('create and update {{pascal_case entry_type.name}}', { concurrency: 1 }, as
     assert.ok(updatedRecord);
 
     // Wait for the updated entry to be propagated to the other node.
-    await pause(1200);
+    await dhtSync([alice, bob], alice.cells[0].cell_id[0]);
         
     // Bob gets the updated {{pascal_case entry_type.name}}
     const readUpdatedOutput0: Record = await bob.cells[0].callZome({
       zome_name: "{{coordinator_zome_manifest.name}}",
-      fn_name: "get_{{snake_case entry_type.name}}",
+      fn_name: "get_latest_{{snake_case entry_type.name}}",
       payload: updatedRecord.signed_action.hashed.hash,
     });
     assert.deepEqual(contentUpdate, decode((readUpdatedOutput0.entry as any).Present.entry) as any);
@@ -195,21 +163,30 @@ test('create and update {{pascal_case entry_type.name}}', { concurrency: 1 }, as
     assert.ok(updatedRecord);
 
     // Wait for the updated entry to be propagated to the other node.
-    await pause(1200);
+    await dhtSync([alice, bob], alice.cells[0].cell_id[0]);
         
     // Bob gets the updated {{pascal_case entry_type.name}}
     const readUpdatedOutput1: Record = await bob.cells[0].callZome({
       zome_name: "{{coordinator_zome_manifest.name}}",
-      fn_name: "get_{{snake_case entry_type.name}}",
+      fn_name: "get_latest_{{snake_case entry_type.name}}",
       payload: updatedRecord.signed_action.hashed.hash,
     });
     assert.deepEqual(contentUpdate, decode((readUpdatedOutput1.entry as any).Present.entry) as any);
+
+    // Bob gets all the revisions for {{pascal_case entry_type.name}}
+    const revisions: Record[] = await bob.cells[0].callZome({
+      zome_name: "{{coordinator_zome_manifest.name}}",
+      fn_name: "get_all_revisions_for_{{snake_case entry_type.name}}",
+      payload: originalActionHash,
+    });
+    assert.equal(revisions.length, 3);
+    assert.deepEqual(contentUpdate, decode((revisions[2].entry as any).Present.entry) as any);
   });
 });
 {{/if}}
 
 {{#if crud.delete}}
-test('create and delete {{pascal_case entry_type.name}}', { concurrency: 1 }, async t => {
+test('create and delete {{pascal_case entry_type.name}}', async () => {
   await runScenario(async scenario => {
     // Construct proper paths for your app.
     // This assumes app bundle created by the `hc app pack` command.
@@ -226,10 +203,29 @@ test('create and delete {{pascal_case entry_type.name}}', { concurrency: 1 }, as
     // conductor of the scenario.
     await scenario.shareAllAgents();
 
+    const sample = await sample{{pascal_case entry_type.name}}(alice.cells[0]);
+
     // Alice creates a {{pascal_case entry_type.name}}
-    const record: Record = await create{{pascal_case entry_type.name}}(alice.cells[0]);
+    const record: Record = await create{{pascal_case entry_type.name}}(alice.cells[0], sample);
     assert.ok(record);
-        
+
+    await dhtSync([alice, bob], alice.cells[0].cell_id[0]);
+
+  {{#each entry_type.fields}}
+    {{#if linked_from}}
+      {{#if (ne (pascal_case linked_from.name) (pascal_case ../entry_type.name))}}
+    // Bob gets the {{pascal_case (plural linked_from.name)}} for the new {{pascal_case ../entry_type.name}}
+    let linksTo{{pascal_case (plural linked_from.name)}}: Link[] = await bob.cells[0].callZome({
+      zome_name: "{{../coordinator_zome_manifest.name}}",
+      fn_name: "get_{{snake_case (plural ../entry_type.name)}}_for_{{snake_case linked_from.name}}",
+      payload: {{#if (eq cardinality "vector")}}sample.{{field_name}}[0]{{else}}sample.{{field_name}}{{/if}}
+    });
+    assert.equal(linksTo{{pascal_case (plural linked_from.name)}}.length, 1);
+    assert.deepEqual(linksTo{{pascal_case (plural linked_from.name)}}[0].target, {{#if ../entry_type.reference_entry_hash}}(record.signed_action.hashed.content as NewEntryAction).entry_hash{{else}}record.signed_action.hashed.hash{{/if}});
+      {{/if}}
+    {{/if}}
+  {{/each}}
+
     // Alice deletes the {{pascal_case entry_type.name}}
     const deleteActionHash = await alice.cells[0].callZome({
       zome_name: "{{coordinator_zome_manifest.name}}",
@@ -239,15 +235,46 @@ test('create and delete {{pascal_case entry_type.name}}', { concurrency: 1 }, as
     assert.ok(deleteActionHash);
 
     // Wait for the entry deletion to be propagated to the other node.
-    await pause(1200);
-        
-    // Bob tries to get the deleted {{pascal_case entry_type.name}}
-    const readDeletedOutput = await bob.cells[0].callZome({
+    await dhtSync([alice, bob], alice.cells[0].cell_id[0]);
+
+    // Bob gets the oldest delete for the {{pascal_case entry_type.name}}
+    const oldestDeleteFor{{pascal_case entry_type.name}}: SignedActionHashed = await bob.cells[0].callZome({
       zome_name: "{{coordinator_zome_manifest.name}}",
-      fn_name: "get_{{snake_case entry_type.name}}",
+      fn_name: "get_oldest_delete_for_{{snake_case entry_type.name}}",
       payload: record.signed_action.hashed.hash,
     });
-    assert.equal(readDeletedOutput, undefined);
+    assert.ok(oldestDeleteFor{{pascal_case entry_type.name}});
+        
+    // Bob gets the deletions for {{pascal_case entry_type.name}}
+    const deletesFor{{title_case entry_type.name}}: SignedActionHashed[] = await bob.cells[0].callZome({
+      zome_name: "{{coordinator_zome_manifest.name}}",
+      fn_name: "get_all_deletes_for_{{snake_case entry_type.name}}",
+      payload: record.signed_action.hashed.hash,
+    });
+    assert.equal(deletesFor{{title_case entry_type.name}}.length, 1);
+
+  {{#each entry_type.fields}}
+    {{#if linked_from}}
+      {{#if (ne (pascal_case linked_from.name) (pascal_case ../entry_type.name))}}
+    // Bob gets the {{pascal_case (plural linked_from.name)}} for the {{pascal_case ../entry_type.name}} again
+    linksTo{{pascal_case (plural linked_from.name)}} = await bob.cells[0].callZome({
+      zome_name: "{{../coordinator_zome_manifest.name}}",
+      fn_name: "get_{{snake_case (plural ../entry_type.name)}}_for_{{snake_case linked_from.name}}",
+      payload: {{#if (eq cardinality "vector")}}sample.{{field_name}}[0]{{else}}sample.{{field_name}}{{/if}}
+    });
+    assert.equal(linksTo{{pascal_case (plural linked_from.name)}}.length, 0);
+
+    // Bob gets the deleted {{pascal_case (plural linked_from.name)}} for the {{pascal_case ../entry_type.name}} 
+    const deletedLinksTo{{pascal_case (plural linked_from.name)}}: Array<[SignedActionHashed<CreateLink>, SignedActionHashed<DeleteLink>[]]> = await bob.cells[0].callZome({
+      zome_name: "{{../coordinator_zome_manifest.name}}",
+      fn_name: "get_deleted_{{snake_case (plural ../entry_type.name)}}_for_{{snake_case linked_from.name}}",
+      payload: {{#if (eq cardinality "vector")}}sample.{{field_name}}[0]{{else}}sample.{{field_name}}{{/if}}
+    });
+    assert.equal(deletedLinksTo{{pascal_case (plural linked_from.name)}}.length, 1);
+      {{/if}}
+    {{/if}}
+  {{/each}}
+
   });
 });
 {{/if}}

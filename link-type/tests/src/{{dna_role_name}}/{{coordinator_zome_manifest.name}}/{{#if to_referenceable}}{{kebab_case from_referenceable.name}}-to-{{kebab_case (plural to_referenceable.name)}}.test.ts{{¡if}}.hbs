@@ -1,18 +1,29 @@
-import test from 'node:test';
-import assert from 'node:assert';
+import { assert, test } from "vitest";
 
-import { runScenario, pause, CallableCell } from '@holochain/tryorama';
-import { NewEntryAction, ActionHash, Record, AppBundleSource } from '@holochain/client';
+import { runScenario, dhtSync, CallableCell } from '@holochain/tryorama';
+import {
+  NewEntryAction,
+  ActionHash,
+  Record,
+  Link,
+  CreateLink,
+  DeleteLink,
+  SignedActionHashed,
+  AppBundleSource,
+  fakeActionHash,
+  fakeAgentPubKey,
+  fakeEntryHash
+} from '@holochain/client';
 import { decode } from '@msgpack/msgpack';
 
 {{#if (ne from_referenceable.hash_type "AgentPubKey")}}
-import { create{{pascal_case from_referenceable.name}} } from './{{kebab_case from_referenceable.name}}.test.js';
+import { create{{pascal_case from_referenceable.name}} } from './common.js';
 {{/if}}
 {{#if (ne to_referenceable.hash_type "AgentPubKey")}}
-import { create{{pascal_case to_referenceable.name}} } from './{{kebab_case to_referenceable.name}}.test.js';
+import { create{{pascal_case to_referenceable.name}} } from './common.js';
 {{/if}}
 
-test('link a {{pascal_case from_referenceable.name}} to a {{pascal_case to_referenceable.name}}', { concurrency: 1 }, async t => {
+test('link a {{pascal_case from_referenceable.name}} to a {{pascal_case to_referenceable.name}}', async () => {
   await runScenario(async scenario => {
     // Construct proper paths for your app.
     // This assumes app bundle created by the `hc app pack` command.
@@ -51,7 +62,7 @@ test('link a {{pascal_case from_referenceable.name}} to a {{pascal_case to_refer
 {{/if}}
 
     // Bob gets the links, should be empty
-    let linksOutput: Record[] = await bob.cells[0].callZome({
+    let linksOutput: Link[] = await bob.cells[0].callZome({
       zome_name: "{{coordinator_zome_manifest.name}}",
       fn_name: "get_{{plural (snake_case to_referenceable.name)}}_for_{{snake_case from_referenceable.name}}",
       payload: baseAddress
@@ -63,12 +74,12 @@ test('link a {{pascal_case from_referenceable.name}} to a {{pascal_case to_refer
       zome_name: "{{coordinator_zome_manifest.name}}",
       fn_name: "add_{{snake_case to_referenceable.name}}_for_{{snake_case from_referenceable.name}}",
       payload: {
-        {{snake_case from_referenceable.singular_arg}}: baseAddress,
-        {{snake_case to_referenceable.singular_arg}}: targetAddress
+        base_{{snake_case from_referenceable.singular_arg}}: baseAddress,
+        target_{{snake_case to_referenceable.singular_arg}}: targetAddress
       }
     });
     
-    await pause(1200);
+    await dhtSync([alice, bob], alice.cells[0].cell_id[0]);
     
     // Bob gets the links again
     linksOutput = await bob.cells[0].callZome({
@@ -78,10 +89,10 @@ test('link a {{pascal_case from_referenceable.name}} to a {{pascal_case to_refer
     });
     assert.equal(linksOutput.length, 1);
 {{#if (ne to_referenceable.hash_type "AgentPubKey")}}
-    assert.deepEqual(targetRecord, linksOutput[0]);
+    assert.deepEqual(targetAddress, linksOutput[0].target);
 {{/if}}
 
-{{#if bidireccional}}
+{{#if bidirectional}}
 
     // Bob gets the links in the inverse direction
     linksOutput = await bob.cells[0].callZome({
@@ -91,7 +102,7 @@ test('link a {{pascal_case from_referenceable.name}} to a {{pascal_case to_refer
     });
     assert.equal(linksOutput.length, 1);
   {{#if (ne from_referenceable.hash_type "AgentPubKey")}}
-    assert.deepEqual(baseRecord, linksOutput[0]);
+    assert.deepEqual(baseAddress, linksOutput[0].target);
   {{/if}}
 {{/if}}
 
@@ -100,12 +111,12 @@ test('link a {{pascal_case from_referenceable.name}} to a {{pascal_case to_refer
       zome_name: "{{coordinator_zome_manifest.name}}",
       fn_name: "remove_{{snake_case to_referenceable.name}}_for_{{snake_case from_referenceable.name}}",
       payload: {
-        {{snake_case from_referenceable.singular_arg}}: baseAddress,
-        {{snake_case to_referenceable.singular_arg}}: targetAddress
+        base_{{snake_case from_referenceable.singular_arg}}: baseAddress,
+        target_{{snake_case to_referenceable.singular_arg}}: targetAddress
       }
     });
     
-    await pause(1200);
+    await dhtSync([alice, bob], alice.cells[0].cell_id[0]);
 
     // Bob gets the links again
     linksOutput = await bob.cells[0].callZome({
@@ -115,7 +126,15 @@ test('link a {{pascal_case from_referenceable.name}} to a {{pascal_case to_refer
     });
     assert.equal(linksOutput.length, 0);
 
-  {{#if bidireccional}}
+    // Bob gets the deleted links
+    let deletedLinksOutput: Array<[SignedActionHashed<CreateLink>, SignedActionHashed<DeleteLink>[]]> = await bob.cells[0].callZome({
+      zome_name: "{{coordinator_zome_manifest.name}}",
+      fn_name: "get_deleted_{{plural (snake_case to_referenceable.name)}}_for_{{snake_case from_referenceable.name}}",
+      payload: baseAddress
+    });
+    assert.equal(deletedLinksOutput.length, 1);
+
+  {{#if bidirectional}}
     // Bob gets the links in the inverse direction
     linksOutput = await bob.cells[0].callZome({
       zome_name: "{{coordinator_zome_manifest.name}}",
@@ -123,9 +142,16 @@ test('link a {{pascal_case from_referenceable.name}} to a {{pascal_case to_refer
       payload: targetAddress
     });
     assert.equal(linksOutput.length, 0);
+
+    // Bob gets the deleted links in the inverse direction
+    deletedLinksOutput = await bob.cells[0].callZome({
+      zome_name: "{{coordinator_zome_manifest.name}}",
+      fn_name: "get_deleted_{{plural (snake_case from_referenceable.name)}}_for_{{snake_case to_referenceable.name}}",
+      payload: targetAddress
+    });
+    assert.equal(deletedLinksOutput.length, 1);
   {{/if}}
 
 {{/if}}
   });
 });
-
