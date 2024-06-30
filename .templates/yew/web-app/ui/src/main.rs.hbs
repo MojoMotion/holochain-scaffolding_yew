@@ -1,7 +1,11 @@
 use yew::prelude::*;
+
+mod app;
 use app::App;
+
+use wasm_bindgen::prelude::*;
 
 
 fn main() {
-    yew::start_app::<App>();
+    yew::Renderer::<App>::new().render();
 }
