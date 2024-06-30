@@ -8,7 +8,9 @@ Enter the nix shell by running this in the root folder of the repository:
 
 ```bash
 nix develop
-npm install
+#npm install
+cargo install trunk
+npm install -g @holochain/hc-spin@">=0.200.0 <0.300.0"
 ```
 
 **Run all the other instructions in this README from inside this nix shell, otherwise they won't work**.
