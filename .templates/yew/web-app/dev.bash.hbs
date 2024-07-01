@@ -1,0 +1,53 @@
+#!/bin/bash
+
+#clean sandbox
+hc s clean
+
+#build zomes
+CARGO_TARGET_DIR=target cargo build --release --target wasm32-unknown-unknown
+
+#bundle happ
+hc app pack workdir --recursive
+
+
+
+PROCESSES=()
+
+_term() {
+    echo "Caught SIGTERM"
+    for child in "${PROCESSES[@]}"; do
+        kill -TERM "$child" 2>/dev/null
+    done 
+}
+
+_int() {
+    echo "Caught SIGINT"
+    for child in "${PROCESSES[@]}"; do
+        kill -TERM "$child" 2>/dev/null
+    done 
+}
+
+trap _term SIGTERM
+trap _int SIGINT
+
+
+
+#start ui
+pushd ui;
+trunk serve &
+TRUNK_PROCESS=$!
+PROCESSES+=($TRUNK_PROCESS)
+popd;
+
+#start happ
+pushd .;
+hc-spin -n 2 --ui-port 8080 workdir/wasm-test.happ &
+HC_SPIN_PROCESS=$!
+PROCESSES+=($HC_SPIN_PROCESS)
+popd;
+
+#TODO: start playground
+
+wait $HC_SPIN_PROCESS
+killall electron
+echo "Dev mode finished"
